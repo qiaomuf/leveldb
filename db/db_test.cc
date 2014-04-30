@@ -1892,6 +1892,9 @@ class ModelDB: public DB {
       sizes[i] = 0;
     }
   }
+  virtual bool GetSplitKey(std::string* key) {
+    return false;
+  }
   virtual void CompactRange(const Slice* start, const Slice* end) {
   }
 

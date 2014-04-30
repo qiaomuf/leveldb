@@ -1148,6 +1148,60 @@ uint64_t VersionSet::ApproximateOffsetOf(Version* v, const InternalKey& ikey) {
   return result;
 }
 
+uint64_t VersionSet::GetTotalSize(Version* v) const
+{
+  uint64_t result = 0;
+  for (int level = 1; level < config::kNumLevels; level++) {
+    const std::vector<FileMetaData*>& files = v->files_[level];
+    for (size_t i = 0; i < files.size(); i++) {
+      result += files[i]->file_size;
+    }
+  }
+  return result;
+}
+
+uint64_t VersionSet::GetSplitKey(Version* v, std::string* key) const {
+  uint64_t target_size = this->GetTotalSize(v) / 2;
+  uint64_t current_size = 0;
+  // Pick one file at a time. The largest key of the picked file should
+  // be the smallest among the rest files.
+  // Level 1 is ignored.
+  const FileMetaData* picked_file = NULL;
+  std::vector<int> level_pos(config::kNumLevels);
+  while (current_size < target_size) {
+    picked_file = NULL;
+    int picked_level = -1;
+    for (int level = 1; level < config::kNumLevels; level++) {
+      if (level_pos[level] >= v->files_[level].size())
+        continue;
+      const FileMetaData* file = v->files_[level][level_pos[level]];
+      if (picked_file == NULL ||
+          icmp_.Compare(picked_file->largest, file->largest) > 0) {
+        picked_file = file;
+        picked_level = level;
+      }
+    }
+    if (picked_file == NULL || picked_level == -1) {
+      Log(options_->info_log, "Failed to pick a valid file to get split key");
+      return false;
+    }
+    current_size += picked_file->file_size;
+    ++level_pos[picked_level];
+  }
+  if (picked_file == NULL)
+    return false;
+  *key = picked_file->largest.user_key().ToString();
+  return true;
+}
+
+uint64_t VersionSet::TEST_GetSplitKey(const std::vector<FileMetaData*>* files_,
+                                      std::string* key) {
+  Version version(this);
+  for (int i = 0; i < config::kNumLevels; ++i)
+    version.files_[i].assign(files_[i].begin(), files_[i].end());
+  return this->GetSplitKey(&version, key);
+}
+
 void VersionSet::AddLiveFiles(std::set<uint64_t>* live) {
   for (Version* v = dummy_versions_.next_;
        v != &dummy_versions_;

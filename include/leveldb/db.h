@@ -128,6 +128,11 @@ class DB {
   virtual void GetApproximateSizes(const Range* range, int n,
                                    uint64_t* sizes) = 0;
 
+  // Get the key that will split the db into two parts with nearly the same
+  // size. MinorCompact() is recommended to be called first if you need more
+  // accurate result;
+  virtual bool GetSplitKey(std::string* key) = 0;
+
   // Compact the underlying storage for the key range [*begin,*end].
   // In particular, deleted and overwritten versions are discarded,
   // and the data is rearranged to reduce the cost of operations

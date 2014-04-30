@@ -261,6 +261,13 @@ class VersionSet {
   // "key" as of version "v".
   uint64_t ApproximateOffsetOf(Version* v, const InternalKey& key);
 
+  // Get the key that can split the database into two parts with
+  // nearly the same size.
+  uint64_t GetSplitKey(Version* v, std::string* key) const;
+
+  uint64_t TEST_GetSplitKey(const std::vector<FileMetaData*>* files_,
+                            std::string* key);
+
   // Return a human-readable short (single-line) summary of the number
   // of files per level.  Uses *scratch as backing store.
   struct LevelSummaryStorage {
@@ -286,6 +293,8 @@ class VersionSet {
                  InternalKey* largest);
 
   void SetupOtherInputs(Compaction* c);
+
+  uint64_t GetTotalSize(Version* v) const;
 
   // Save current contents to *log
   Status WriteSnapshot(log::Writer* log);

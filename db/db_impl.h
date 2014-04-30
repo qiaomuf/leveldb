@@ -40,6 +40,7 @@ class DBImpl : public DB {
   virtual void ReleaseSnapshot(const Snapshot* snapshot);
   virtual bool GetProperty(const Slice& property, std::string* value);
   virtual void GetApproximateSizes(const Range* range, int n, uint64_t* sizes);
+  virtual bool GetSplitKey(std::string* key);
   virtual void CompactRange(const Slice* begin, const Slice* end);
 
   // Extra methods (for testing) that are not in the public DB interface

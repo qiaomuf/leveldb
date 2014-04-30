@@ -172,6 +172,50 @@ TEST(FindFileTest, OverlappingFiles) {
   ASSERT_TRUE(Overlaps("600", "700"));
 }
 
+class GetSplitKeyTest
+{
+public:
+  void AddFileMeta(int level, const char* smallest,
+                   const char* largest, uint64_t file_size)
+  {
+    // Will be deleted when Version is destructed
+    FileMetaData* file = new FileMetaData;
+    file->refs = 1;
+    SequenceNumber n = 100;
+    file->smallest = InternalKey(smallest, n, kTypeValue);
+    file->largest = InternalKey(largest, n, kTypeValue);
+    file->file_size = file_size;
+    files_[level].push_back(file);
+  }
+  std::vector<FileMetaData*> files_[config::kNumLevels];
+};
+
+TEST(GetSplitKeyTest, EmptyDB)
+{
+  InternalKeyComparator cmp(BytewiseComparator());
+  Options options;
+  VersionSet vset("test_db", &options, NULL, &cmp);
+  std::string key;
+  ASSERT_TRUE(vset.TEST_GetSplitKey(files_, &key) == false);
+  ASSERT_EQ(0u, key.size());
+}
+
+TEST(GetSplitKeyTest, GetSplitKey)
+{
+  AddFileMeta(1, "100", "200", 1024);
+  AddFileMeta(2, "300", "400", 1024);
+  AddFileMeta(2, "500", "700", 1024);
+  AddFileMeta(2, "900", "950", 1024);
+  AddFileMeta(3, "100", "800", 1024);
+  AddFileMeta(3, "980", "990", 1024);
+  InternalKeyComparator cmp(BytewiseComparator());
+  Options options;
+  VersionSet vset("test_db", &options, NULL, &cmp);
+  std::string key;
+  vset.TEST_GetSplitKey(files_, &key);
+  ASSERT_TRUE(strcmp("700", key.c_str()) == 0);
+}
+
 }  // namespace leveldb
 
 int main(int argc, char** argv) {

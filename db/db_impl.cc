@@ -1426,6 +1426,24 @@ void DBImpl::GetApproximateSizes(
   }
 }
 
+bool DBImpl::GetSplitKey(std::string* key) {
+  Version* v;
+  {
+    MutexLock l(&mutex_);
+    versions_->current()->Ref();
+    v = versions_->current();
+  }
+
+  bool ret = versions_->GetSplitKey(v, key);
+
+  {
+    MutexLock l(&mutex_);
+    v->Unref();
+  }
+
+  return ret;
+}
+
 // Default implementations of convenience methods that subclasses of DB
 // can call if they wish
 Status DB::Put(const WriteOptions& opt, const Slice& key, const Slice& value) {
