@@ -4,6 +4,11 @@
 
 #include "leveldb/env.h"
 
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
 #include "port/port.h"
 #include "util/testharness.h"
 
@@ -95,6 +100,38 @@ TEST(EnvPosixTest, StartThread) {
     Env::Default()->SleepForMicroseconds(kDelayMicros);
   }
   ASSERT_EQ(state.val, 3);
+}
+
+TEST(EnvPosixTest, SplitPathDeleteFile)
+{
+    system("rm -rf ./tmp_env_posix_test");
+    mkdir("./tmp_env_posix_test", 0777);
+    mkdir("./tmp_env_posix_test/0", 0777);
+    mkdir("./tmp_env_posix_test/1", 0777);
+    mkdir("./tmp_env_posix_test/0/0", 0777);
+    mkdir("./tmp_env_posix_test/0/1", 0777);
+    mkdir("./tmp_env_posix_test/1/0", 0777);
+    mkdir("./tmp_env_posix_test/1/1", 0777);
+    close(open("./tmp_env_posix_test/LOG", O_RDWR | O_CREAT, S_IRUSR | S_IRGRP | S_IROTH));
+    close(open("./tmp_env_posix_test/LOG__del_from_0", O_RDWR | O_CREAT, S_IRUSR | S_IRGRP | S_IROTH));
+    std::vector<std::string> children;
+    env_->GetChildren("./tmp_env_posix_test/1/1", &children);
+    ASSERT_EQ(12u, children.size());
+    children.clear();
+    env_->GetChildren("./tmp_env_posix_test/0/0", &children);
+    ASSERT_EQ(12u, children.size());
+
+    Status s = env_->DeleteFile("./tmp_env_posix_test/1/0/LOG");
+    ASSERT_TRUE(s.ok());
+    children.clear();
+    env_->GetChildren("./tmp_env_posix_test/1/0", &children);
+    ASSERT_EQ(13u, children.size());
+
+    s = env_->DeleteFile("./tmp_env_posix_test/1/1/LOG");
+    ASSERT_TRUE(s.ok());
+    children.clear();
+    env_->GetChildren("./tmp_env_posix_test/1/0", &children);
+    ASSERT_EQ(10u, children.size());
 }
 
 }  // namespace leveldb

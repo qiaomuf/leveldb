@@ -1898,6 +1898,8 @@ class ModelDB: public DB {
   virtual void CompactRange(const Slice* start, const Slice* end) {
   }
 
+  virtual bool GetSplitKey(Slice* key) {};
+
  private:
   class ModelIter: public Iterator {
    public:

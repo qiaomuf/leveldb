@@ -31,8 +31,60 @@ namespace leveldb {
 
 namespace {
 
+static const char FIRST_CHILD = '0';
+static const char SECOND_CHILD = '1';
+static const std::string DELETION_MARK = "__del_from_";
+
 static Status IOError(const std::string& context, int err_number) {
   return Status::IOError(context, strerror(err_number));
+}
+
+static bool PosixFileExists(const std::string& fname) {
+  return access(fname.c_str(), F_OK) == 0;
+}
+
+static Status PosixDeleteFile(const std::string& fname) {
+  if (unlink(fname.c_str()) != 0) {
+    return IOError(fname, errno);
+  }
+  else {
+    return Status::OK();
+  }
+}
+static std::string GetParentName(const std::string& filename)
+{
+  // A legal filename should have the format:
+  //     (.+)/[FIRST_CHILD|SECOND_CHILD]/(.+)
+  // group(1)/group(2) is what we need.
+  size_t pos = filename.rfind('/');
+  if (pos == std::string::npos) {
+    return "";
+  }
+  size_t parent_pos = filename.substr(0, pos).rfind('/');
+  if (parent_pos == std::string::npos) {
+    return "";
+  }
+  std::string parent = filename.substr(0, parent_pos + 1);
+  if (PosixFileExists(parent)) {
+    return parent + filename.substr(pos + 1);
+  }
+  return "";
+}
+
+static std::string GetRealName(const std::string& filename)
+{
+  if (PosixFileExists(filename)) {
+    return filename;
+  }
+
+  std::string result = filename;
+  while (true) {
+    result = GetParentName(result);
+    if (result == "" || PosixFileExists(result)) {
+      return result;
+    }
+  }
+  return "";
 }
 
 class PosixSequentialFile: public SequentialFile {
@@ -299,8 +351,9 @@ class PosixEnv : public Env {
     abort();
   }
 
-  virtual Status NewSequentialFile(const std::string& fname,
+  virtual Status NewSequentialFile(const std::string& origin_fname,
                                    SequentialFile** result) {
+    std::string fname(GetRealName(origin_fname));
     FILE* f = fopen(fname.c_str(), "r");
     if (f == NULL) {
       *result = NULL;
@@ -311,10 +364,11 @@ class PosixEnv : public Env {
     }
   }
 
-  virtual Status NewRandomAccessFile(const std::string& fname,
+  virtual Status NewRandomAccessFile(const std::string& origin_fname,
                                      RandomAccessFile** result) {
     *result = NULL;
     Status s;
+    std::string fname(GetRealName(origin_fname));
     int fd = open(fname.c_str(), O_RDONLY);
     if (fd < 0) {
       s = IOError(fname, errno);
@@ -353,12 +407,11 @@ class PosixEnv : public Env {
   }
 
   virtual bool FileExists(const std::string& fname) {
-    return access(fname.c_str(), F_OK) == 0;
+    return PosixFileExists(GetRealName(fname));
   }
 
-  virtual Status GetChildren(const std::string& dir,
-                             std::vector<std::string>* result) {
-    result->clear();
+  Status AddChildren(const std::string& dir, std::vector<std::string>* result)
+  {
     DIR* d = opendir(dir.c_str());
     if (d == NULL) {
       return IOError(dir, errno);
@@ -371,10 +424,68 @@ class PosixEnv : public Env {
     return Status::OK();
   }
 
+  virtual Status GetChildren(const std::string& dir,
+                             std::vector<std::string>* result) {
+    result->clear();
+    Status s = AddChildren(dir, result);
+    if (!s.ok()) {
+      return s;
+    }
+    // Search for parent directories with name equals FIRST_CHILD
+    // or SECOND_CHILD
+    int current_pos = dir.size() - 1;
+    while (current_pos > 0) {
+      if (dir[current_pos] == '/') {
+        --current_pos;
+      }
+      if (current_pos <= 0 || dir[current_pos - 1] != '/' ||
+            (dir[current_pos] != FIRST_CHILD &&
+             dir[current_pos] != SECOND_CHILD)) {
+        break;
+      }
+      std::string current_child_id(dir.substr(current_pos, 1));
+      std::string parent = dir.substr(0, current_pos);
+      s = AddChildren(parent, result);
+      if (!s.ok()) {
+        return s;
+      }
+      --current_pos;
+    }
+    return Status::OK();
+  }
+
   virtual Status DeleteFile(const std::string& fname) {
     Status result;
-    if (unlink(fname.c_str()) != 0) {
-      result = IOError(fname, errno);
+    std::string real_name(GetRealName(fname));
+    if (real_name == fname || real_name == "") {
+      result = PosixDeleteFile(fname);
+    }
+    else
+    {
+      char child_id = fname[fname.rfind("/") - 1];
+      std::string parent_filename(GetParentName(fname));
+      std::string other_mark = parent_filename + DELETION_MARK +
+          (child_id == FIRST_CHILD ? SECOND_CHILD : FIRST_CHILD);
+      std::string this_mark = parent_filename + DELETION_MARK +
+          child_id;
+      if (PosixFileExists(other_mark)) {
+        if (parent_filename == real_name) {
+          result = PosixDeleteFile(real_name);
+        }
+        else {
+          // Recursive delete because of possible recisive
+          // deletion mark
+          this->DeleteFile(GetParentName(fname));
+        }
+        if (result.ok()) {
+          result = PosixDeleteFile(other_mark);
+        }
+      }
+      else if (open(this_mark.c_str(),
+               O_RDWR | O_CREAT,
+               S_IRUSR | S_IRGRP | S_IROTH) == -1) {
+        result = IOError(this_mark, errno);
+      }
     }
     return result;
   }
@@ -395,9 +506,10 @@ class PosixEnv : public Env {
     return result;
   }
 
-  virtual Status GetFileSize(const std::string& fname, uint64_t* size) {
+  virtual Status GetFileSize(const std::string& origin_fname, uint64_t* size) {
     Status s;
     struct stat sbuf;
+    std::string fname(GetRealName(origin_fname));
     if (stat(fname.c_str(), &sbuf) != 0) {
       *size = 0;
       s = IOError(fname, errno);
