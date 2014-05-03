@@ -6,6 +6,7 @@
 #define STORAGE_LEVELDB_INCLUDE_OPTIONS_H_
 
 #include <stddef.h>
+#include <string>
 
 namespace leveldb {
 
@@ -134,6 +135,11 @@ struct Options {
   //
   // Default: NULL
   const FilterPolicy* filter_policy;
+
+  // Valid start key
+  std::string key_start;
+  // Valid end key, [key_start, key_end) will be valid
+  std::string key_end;
 
   // Create an Options object with default values for all fields.
   Options();

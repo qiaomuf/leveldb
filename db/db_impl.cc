@@ -143,6 +143,8 @@ DBImpl::DBImpl(const Options& raw_options, const std::string& dbname)
 
   versions_ = new VersionSet(dbname_, &options_, table_cache_,
                              &internal_comparator_);
+  key_start_ = raw_options.key_start.empty() ? NULL: new Slice(raw_options.key_start);
+  key_end_ = raw_options.key_end.empty() ? NULL: new Slice(raw_options.key_end);
 }
 
 DBImpl::~DBImpl() {
@@ -172,6 +174,8 @@ DBImpl::~DBImpl() {
   if (owns_cache_) {
     delete options_.block_cache;
   }
+  delete key_start_;
+  delete key_end_;
 }
 
 Status DBImpl::NewDB() {
@@ -852,6 +856,16 @@ Status DBImpl::InstallCompactionResults(CompactionState* compact) {
   return versions_->LogAndApply(compact->compaction->edit(), &mutex_);
 }
 
+bool DBImpl::IsValidKeyRange(const Slice& user_key) const {
+  if (key_start_ && user_comparator()->Compare(user_key, *key_start_) < 0) {
+    return false;
+  }
+  if (key_end_ && user_comparator()->Compare(user_key, *key_end_) >= 0) {
+    return false;
+  }
+  return true;
+}
+
 Status DBImpl::DoCompactionWork(CompactionState* compact) {
   const uint64_t start_micros = env_->NowMicros();
   int64_t imm_micros = 0;  // Micros spent doing imm_ compactions
@@ -933,6 +947,8 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
         //     smaller sequence numbers will be dropped in the next
         //     few iterations of this loop (by rule (A) above).
         // Therefore this deletion marker is obsolete and can be dropped.
+        drop = true;
+      } else if(!IsValidKeyRange(ikey.user_key)) {
         drop = true;
       }
 
@@ -1442,6 +1458,10 @@ bool DBImpl::GetSplitKey(std::string* key) {
   }
 
   return ret;
+}
+
+Status DBImpl::MinorCompact() {
+  return TEST_CompactMemTable();
 }
 
 // Default implementations of convenience methods that subclasses of DB

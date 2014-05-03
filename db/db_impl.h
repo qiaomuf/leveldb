@@ -40,7 +40,10 @@ class DBImpl : public DB {
   virtual void ReleaseSnapshot(const Snapshot* snapshot);
   virtual bool GetProperty(const Slice& property, std::string* value);
   virtual void GetApproximateSizes(const Range* range, int n, uint64_t* sizes);
+  // Added for split
   virtual bool GetSplitKey(std::string* key);
+  virtual Status MinorCompact();
+
   virtual void CompactRange(const Slice* begin, const Slice* end);
 
   // Extra methods (for testing) that are not in the public DB interface
@@ -111,6 +114,7 @@ class DBImpl : public DB {
   void  BackgroundCompaction() EXCLUSIVE_LOCKS_REQUIRED(mutex_);
   void CleanupCompaction(CompactionState* compact)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  bool IsValidKeyRange(const Slice& key) const;
   Status DoCompactionWork(CompactionState* compact)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
@@ -190,6 +194,9 @@ class DBImpl : public DB {
     }
   };
   CompactionStats stats_[config::kNumLevels];
+
+  Slice* key_start_;
+  Slice* key_end_;
 
   // No copying allowed
   DBImpl(const DBImpl&);
