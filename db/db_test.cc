@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+
 #include "leveldb/db.h"
 #include "leveldb/filter_policy.h"
 #include "db/db_impl.h"
@@ -1895,6 +1899,11 @@ class ModelDB: public DB {
   virtual bool GetSplitKey(std::string* key) {
     return false;
   }
+
+  virtual Status MinorCompact () {
+    return Status::OK();
+  }
+
   virtual void CompactRange(const Slice* start, const Slice* end) {
   }
 
@@ -2118,6 +2127,106 @@ void BM_LogAndApply(int iters, int num_base_files) {
           buf, iters, us, ((float)us) / iters);
 }
 
+class LevelDBTest
+{
+ public:
+   LevelDBTest()
+   {
+     leveldb::Options options;
+     options.create_if_missing = true;
+     options.compression = leveldb::kNoCompression;
+     leveldb::Status status = leveldb::DB::Open(options, "/tmp/test_leveldb_split", &db);
+   }
+   ~LevelDBTest()
+   {
+     delete db;
+   }
+
+   void FillDB(int start, int end, leveldb::DB* db)
+   {
+     std::stringstream key_str;
+     for (int i = start; i <= end; ++i)
+     {
+       key_str << std::setfill ('0') << std::setw (6) << i << "th";
+       db->Put(leveldb::WriteOptions(), key_str.str().c_str(), std::string(1024, 'c'));
+       key_str.str("");
+     }
+   }
+   leveldb::DB* db;
+};
+
+TEST(LevelDBTest, TestWriteData)
+{
+  std::string value;
+  db->Put(leveldb::WriteOptions(), "abc", "def");
+  db->Get(leveldb::ReadOptions(), "abc", &value);
+  FillDB(0, 100 * 1024, db);
+  db->MinorCompact();
+  std::string key;
+  db->GetSplitKey(&key);
+  leveldb::Range first;
+  first.start = "000000th";
+  first.limit = key;
+  leveldb::Range second;
+  second.start = key;
+  second.limit = "102401th";
+  uint64_t first_size, second_size;
+  db->GetApproximateSizes(&first, 1, &first_size);
+  db->GetApproximateSizes(&second, 1, &second_size);
+  ASSERT_TRUE(abs(first_size - second_size) / std::max(first_size, second_size) < 0.2);
+  ASSERT_TRUE(key[0] == '0' && key[1] == '5');
+  ASSERT_TRUE(strcmp("def", value.c_str()) == 0);
+}
+
+TEST(LevelDBTest, Compact)
+{
+  std::string split_key;
+  db->CompactRange(NULL, NULL);
+  db->GetSplitKey(&split_key);
+  ASSERT_TRUE(split_key[0] == '0' && split_key[1] == '5');
+  delete db;
+  db = NULL;
+
+  leveldb::Status status;
+  std::string value;
+
+  leveldb::DB* db0;
+  leveldb::Options options0;
+  options0.key_start = split_key;
+  options0.compression = leveldb::kNoCompression;
+  status = leveldb::DB::Open(options0, "/tmp/test_leveldb_split/0", &db0);
+  ASSERT_TRUE(status.ok());
+  FillDB(100 * 530, 100 * 1024, db0);
+  db0->CompactRange(NULL, NULL);
+  status = db0->Get(leveldb::ReadOptions(), "049000th", &value);
+  ASSERT_TRUE(!status.ok());
+  status = db0->Get(leveldb::ReadOptions(), "099999th", &value);
+  ASSERT_TRUE(status.ok());
+  delete db0;
+
+  leveldb::DB* db1;
+  leveldb::Options options1;
+  options1.compression = leveldb::kNoCompression;
+  options1.key_end = split_key;
+  status = leveldb::DB::Open(options1, "/tmp/test_leveldb_split/1", &db1);
+  ASSERT_TRUE(status.ok());
+  FillDB(0, 100 * 520, db1);
+  db1->CompactRange(NULL, NULL);
+  status = db1->Get(leveldb::ReadOptions(), "000100th", &value);
+  ASSERT_TRUE(status.ok());
+  status = db1->Get(leveldb::ReadOptions(), "061000th", &value);
+  ASSERT_TRUE(!status.ok());
+  delete db1;
+}
+TEST(LevelDBTest, OpenExistDB)
+{
+  leveldb::Options options1;
+  leveldb::Status status = leveldb::DB::Open(options1, "/tmp/test_leveldb_split/1", &db);
+  ASSERT_TRUE(status.ok());
+  status = leveldb::DB::Open(options1, "/tmp/test_leveldb_split/0", &db);
+  ASSERT_TRUE(status.ok());
+}
+
 }  // namespace leveldb
 
 int main(int argc, char** argv) {
@@ -2129,5 +2238,7 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  return leveldb::test::RunAllTests();
+  int ret = leveldb::test::RunAllTests();
+  system("rm -rf /tmp/test_leveldb_split");
+  return ret;
 }
